@@ -192,7 +192,7 @@ def quick_answer(message, dataset, settings, rows, run_tool, context=None):
     if len(found) > 1:
         suppliers = ', '.join(dict.fromkeys(_text(r.get('supplier')) for r in found[:5]))
         return {'answer': f'Артикул или код {_text(identifier)} соответствует {len(found)} товарам: {suppliers}. '
-                'Откройте нужную карточку товара и нажмите «Объяснить с агентом», чтобы выбрать точный товар.'}
+                'Откройте нужную карточку товара и нажмите «Объяснить расчёт», чтобы выбрать точный товар.'}
     row = found[0]
     run_tool('explain_product', {'id': row['id']})
     return {'answer': _explain(row)}
