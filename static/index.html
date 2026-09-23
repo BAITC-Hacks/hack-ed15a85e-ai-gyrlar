@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>StockPilot — заказы поставщикам</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<aside class="sidebar">
+  <a class="brand" href="/"><span class="brand-icon">S<span>↗</span></span><span>StockPilot<small>ЭЛЕКТРОКОМПЛЕКТ</small></span></a>
+  <div class="workspace-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+  <nav><button class="nav active" data-view="orders"><span>▤</span> Заказы поставщикам</button><button class="nav" data-view="quality"><span>◈</span> Источники данных</button><button class="nav" data-view="method"><span>⌘</span> Как устроен расчёт</button></nav>
+  <div class="sidebar-note"><span class="small-dot"></span> Локальное приложение<p>Данные хранятся<br>на этом компьютере</p></div>
+  <div class="profile"><span class="avatar">ЭК</span><div>Менеджер закупа<small>Склад Алматы</small></div></div>
+</aside>
+<div class="application">
+  <header class="topbar"><div>Планирование закупок <span>/</span> <strong id="breadcrumb">Рекомендации</strong></div><div class="top-right"><span id="data-mode" class="muted">Данные партнёра</span><span class="date-label">На 22 сентября 2026</span></div></header>
+  <main>
+    <div class="page-heading"><div><div class="eyebrow">ПОПОЛНЕНИЕ СКЛАДА</div><h1 id="page-title">Заказы под контролем</h1><p id="page-subtitle">Регулярный спрос, реальные остатки, объяснимые рекомендации.</p></div><div class="heading-actions"><button id="settings-open" class="button secondary">⚙ Параметры</button><button id="export" class="button primary">↓ Экспорт CSV</button></div></div>
+    <section id="orders-view" class="view">
+      <div class="stats" id="stats"><div class="skeleton">Загружаем расчёт…</div></div>
+      <div class="work-grid">
+        <section class="orders-panel">
+          <div class="panel-heading"><div><h2>Рекомендации к заказу <span id="result-count" class="counter"></span></h2><p>Выберите позицию, чтобы проверить расчёт</p></div><span class="status-dot">Рассчитано локально</span></div>
+          <div class="supplier-tabs" id="supplier-tabs"><button class="supplier active" data-supplier="">Все поставщики</button><button class="supplier" data-supplier="IEK">IEK</button><button class="supplier" data-supplier="Systeme Electric">Systeme Electric</button></div>
+          <div class="table-controls"><label class="search"><span>⌕</span><input id="search" aria-label="Поиск товара" placeholder="Артикул, код или название"></label><select id="status-filter" aria-label="Фильтр рекомендаций"><option value="order">К заказу</option><option value="all">Все позиции</option><option value="urgent">Риск дефицита</option><option value="missing">Нет остатка</option><option value="outlier">Есть выбросы</option><option value="approved">Утверждённые</option></select></div>
+          <div class="table-scroll"><table><thead><tr><th>Товар / поставщик</th><th class="num">Остаток</th><th class="num">В пути</th><th class="num">К заказу</th><th>Приоритет</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
+          <div class="pagination"><span id="page-info"></span><div><button id="prev" aria-label="Предыдущая страница">←</button><button id="next" aria-label="Следующая страница">→</button></div></div>
+          <div class="table-note"><span>ⓘ</span> IEK: исходные остатки на начало сентября. Предварительные рекомендации требуют сверки.</div>
+        </section>
+        <aside class="agent-panel">
+          <div class="agent-heading"><span class="agent-icon">✦</span><div><h2>Закупочный агент</h2><span id="agent-mode">Демонстрационный режим</span></div><span class="small-dot"></span></div>
+          <div class="agent-intro"><h3>Разберём закупки<br>вместе.</h3><p>Объясню рекомендации, покажу риски и сравню сценарии.</p></div>
+          <div class="quick-prompts"><button data-prompt="Какие позиции требуют срочного заказа?">Что заказать в первую очередь? <span>↗</span></button><button data-prompt="Покажи разовые всплески продаж">Где обнаружены всплески? <span>↗</span></button><button data-prompt="Сценарий роста спроса 20%">Что изменит рост спроса на 20%? <span>↗</span></button></div>
+          <div class="chat" id="chat" aria-live="polite"><div class="assistant-message initial"><div class="chat-label">STOCKPILOT</div>Начните с вопроса или откройте карточку товара. Все выводы опираются на текущий расчёт.</div></div>
+          <form id="chat-form"><label class="sr-only" for="message">Вопрос агенту</label><div class="message-input"><textarea id="message" placeholder="Спросите о закупках…" rows="2" maxlength="4000"></textarea><button id="chat-send" type="submit" aria-label="Отправить вопрос">↑</button></div></form>
+          <p class="agent-footnote" id="agent-footnote">Без API-ключа: помощник по заданным сценариям. Подключение ИИ — в параметрах.</p>
+        </aside>
+      </div>
+    </section>
+    <section id="quality-view" class="view hidden"><div id="quality-content"></div></section>
+    <section id="method-view" class="view hidden"><div class="method-grid">
+      <article class="content-card"><div class="step-number">01</div><h2>Сначала проверяем данные</h2><p>Объединяем источники по поставщику и коду 1С, сохраняем происхождение каждой позиции. Возвраты остаются отрицательными корректировками. Пустой остаток не превращается в ноль.</p></article>
+      <article class="content-card"><div class="step-number">02</div><h2>Отделяем разовый спрос</h2><p>Объединяем строки накладных. Крупные отклонения от медианы и MAD заменяем типичным объёмом. При наличии обезличенного ID дополнительно проверяем суммарные продажи клиенту за день.</p></article>
+      <article class="content-card"><div class="step-number">03</div><h2>Восстанавливаем потребность</h2><p>Используем полные месяцы, сезонные коэффициенты и устойчивый тренд. При подтверждённых периодах отсутствия товара компенсируем потерянный спрос. Месячного снимка недостаточно для подтверждения stockout.</p></article>
+      <article class="content-card"><div class="step-number">04</div><h2>Рассчитываем заказ</h2><p>Потребность на срок поставки и цикл заказа плюс страховой запас, минус свободный остаток и поступления в этом горизонте. Результат округляем по кратности и минимальной партии.</p></article>
+      <article class="content-card wide"><h2>Менеджер принимает решение</h2><p>В карточке можно сверить остаток, изменить количество и утвердить строку локально. Изменение исходных данных или параметров снимает прежнее утверждение. Экспорт содержит рекомендуемое и утверждённое количество. Отправка поставщику не выполняется.</p><div class="formula">Заказ = округление партии (max (0, спрос + запас − остаток − поставки))</div></article>
+    </div></section>
+    <footer>StockPilot <span>HackAlem AI · Электрокомплект</span><span>Объяснимое планирование закупок</span></footer>
+  </main>
+</div>
+<dialog id="item-dialog"><div id="item-content"></div></dialog>
+<dialog id="settings-dialog"><div class="dialog-heading"><div><div class="eyebrow">НАСТРОЙКИ РАСЧЁТА</div><h2>Параметры пополнения</h2></div><button class="icon-button close-dialog" aria-label="Закрыть">×</button></div>
+  <p class="dialog-help">Сроки и страховой запас — допущения сценария. Условия поставщиков нужно подтвердить перед заказом.</p>
+  <form id="settings-form"><div class="form-grid">
+    <label>Срок поставки, дней<input name="lead_days" type="number" min="1" max="180" required></label><label>Цикл заказа, дней<input name="review_days" type="number" min="1" max="90" required></label>
+    <label>Страховой запас, дней<input name="safety_days" type="number" min="0" max="90" required></label><label>Прогноз прироста, %<input name="growth_pct" type="number" min="-90" max="300" step="0.1" required></label>
+  </div><div class="toggles"><label><input name="seasonality" type="checkbox"> Учитывать сезонность</label><label><input name="trend" type="checkbox"> Учитывать устойчивый тренд</label><label><input name="remove_outliers" type="checkbox"> Исключать разовые всплески</label><label><input name="compensate_stockouts" type="checkbox"> Компенсировать подтверждённый stockout</label></div>
+  <details class="category-settings"><summary>Правило для категории</summary><p class="muted">Категории поставщика не имеют готовых нормативов. Можно задать свой запас и дополнительный прирост.</p><div class="form-grid"><label>Категория<select id="policy-category"><option value="">Без изменения правил</option></select></label><label>Запас категории, дней<input id="policy-safety" type="number" min="0" max="90"></label><label>Дополнительный прирост, %<input id="policy-growth" type="number" min="-90" max="300" step="0.1"></label></div></details>
+  <details class="connection"><summary>Подключение ИИ-агента</summary><p>Для языковой модели задайте <code>OPENAI_API_KEY</code> в локальном файле <code>.env</code> и перезапустите приложение. Образец — <code>.env.example</code>.</p><p>При подключении вопрос и результаты выбранных расчётных функций передаются OpenAI. Исходные Excel-файлы и ключ в браузер не передаются.</p></details>
+  <div class="dialog-actions"><button type="button" class="button secondary close-dialog">Отмена</button><button type="submit" class="button primary">Пересчитать рекомендации</button></div></form>
+</dialog>
+<div id="toast" class="toast hidden" role="status"></div>
+<script src="/app.js"></script>
+</body></html>
