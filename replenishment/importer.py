@@ -6,6 +6,8 @@ import csv
 import hashlib
 import json
 import re
+import tempfile
+import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -47,6 +49,7 @@ def import_workbooks(root: Path):
         return catalog[key]
 
     for dirname, supplier in [('Systeme electric', 'Systeme Electric'), ('IEK', 'IEK')]:
+        print(f'{supplier}: чтение справочников и месячных данных…', flush=True)
         folder = root/dirname
         paths = sorted(folder.rglob('*.xlsx'))
         if len(paths) != 6:
@@ -160,6 +163,7 @@ def import_workbooks(root: Path):
                     obj['warnings'].append('Закупка бухтами, учёт в метрах: проверить коэффициент единиц')
 
         p = bytype['events']
+        print(f'{supplier}: обработка динамики продаж и сверка…', flush=True)
         events = defaultdict(list)
         net = defaultdict(lambda: defaultdict(float))
         for lineno, row in enumerate(read_rows(p), 1):
@@ -248,15 +252,37 @@ def apply_stockouts(dataset, path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--source', type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--source', type=Path, help='Каталог с папками IEK и Systeme electric')
+    source.add_argument('--archives', type=Path, nargs=2, metavar='ZIP',
+                        help='Архивы IEK.zip и Systeme electric.zip в любом порядке')
     parser.add_argument('--output', type=Path, default=Path('data/dataset.json'))
     parser.add_argument('--stockouts', type=Path)
     args = parser.parse_args()
-    data = import_workbooks(args.source)
+    if args.archives:
+        names = {'iek': 'IEK', 'systeme electric': 'Systeme electric'}
+        if {p.stem.casefold() for p in args.archives} != set(names):
+            parser.error('Нужны оба архива: IEK.zip и Systeme electric.zip')
+        with tempfile.TemporaryDirectory(prefix='stockpilot-import-') as temp:
+            root = Path(temp)
+            for archive in args.archives:
+                destination = root/names[archive.stem.casefold()]
+                print(f'Чтение архива: {archive.name}', flush=True)
+                with zipfile.ZipFile(archive) as zipped:
+                    for member in zipped.infolist():
+                        target = (destination/member.filename).resolve()
+                        if not target.is_relative_to(destination.resolve()):
+                            raise ValueError(f'Недопустимый путь внутри архива: {member.filename}')
+                    zipped.extractall(destination)
+            data = import_workbooks(root)
+    else:
+        data = import_workbooks(args.source)
     if args.stockouts:
         apply_stockouts(data, args.stockouts)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(data, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+    temporary = args.output.with_suffix(args.output.suffix+'.tmp')
+    temporary.write_text(json.dumps(data, ensure_ascii=False, separators=(',', ':'), allow_nan=False), encoding='utf-8')
+    temporary.replace(args.output)
     print(json.dumps(dict(items=len(data['items']), sources=len(data['sources']), diagnostics=data['diagnostics']), ensure_ascii=False, indent=2))
 
 

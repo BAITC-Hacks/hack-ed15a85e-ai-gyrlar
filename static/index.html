@@ -14,15 +14,17 @@
   <main>
     <div class="page-heading"><div><div class="eyebrow">ПОПОЛНЕНИЕ СКЛАДА</div><h1 id="page-title">Заказы под контролем</h1><p id="page-subtitle">Регулярный спрос, реальные остатки, объяснимые рекомендации.</p></div><div class="heading-actions"><button id="settings-open" class="button secondary">⚙ Параметры</button><button id="export" class="button primary">↓ Экспорт CSV</button></div></div>
     <section id="orders-view" class="view">
+      <div id="dataset-overview" class="dataset-overview" aria-live="polite"><span class="skeleton">Читаем источники данных…</span></div>
       <div class="stats" id="stats"><div class="skeleton">Загружаем расчёт…</div></div>
+      <div class="workflow"><span><b>1</b> Выберите товары</span><span><b>2</b> Проверьте расчёт и остатки</span><span><b>3</b> Утвердите и выгрузите заказ</span></div>
       <div class="work-grid">
         <section class="orders-panel">
           <div class="panel-heading"><div><h2>Рекомендации к заказу <span id="result-count" class="counter"></span></h2><p>Выберите позицию, чтобы проверить расчёт</p></div><span class="status-dot">Рассчитано локально</span></div>
           <div class="supplier-tabs" id="supplier-tabs"><button class="supplier active" data-supplier="">Все поставщики</button><button class="supplier" data-supplier="IEK">IEK</button><button class="supplier" data-supplier="Systeme Electric">Systeme Electric</button></div>
-          <div class="table-controls"><label class="search"><span>⌕</span><input id="search" aria-label="Поиск товара" placeholder="Артикул, код или название"></label><select id="status-filter" aria-label="Фильтр рекомендаций"><option value="order">К заказу</option><option value="all">Все позиции</option><option value="urgent">Риск дефицита</option><option value="missing">Нет остатка</option><option value="outlier">Есть выбросы</option><option value="approved">Утверждённые</option></select></div>
+          <div class="table-controls"><label class="search"><span>⌕</span><input id="search" aria-label="Поиск товара" placeholder="Артикул, код или название"></label><select id="status-filter" aria-label="Фильтр рекомендаций"><option value="order">К заказу</option><option value="all">Все позиции</option><option value="urgent">Риск дефицита</option><option value="missing">Остаток неизвестен</option><option value="preliminary">Нужно сверить</option><option value="outlier">Есть выбросы</option><option value="approved">Утверждённые</option></select><select id="category-filter" aria-label="Категория товара"><option value="">Все категории</option></select></div>
           <div class="table-scroll"><table><thead><tr><th>Товар / поставщик</th><th class="num">Остаток</th><th class="num">В пути</th><th class="num">К заказу</th><th>Приоритет</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
-          <div class="pagination"><span id="page-info"></span><div><button id="prev" aria-label="Предыдущая страница">←</button><button id="next" aria-label="Следующая страница">→</button></div></div>
-          <div class="table-note"><span>ⓘ</span> IEK: исходные остатки на начало сентября. Предварительные рекомендации требуют сверки.</div>
+          <div class="pagination"><span id="page-info"></span><div><button id="reset-filters" class="reset-filters" aria-label="Сбросить фильтры">Сбросить</button><button id="prev" aria-label="Предыдущая страница">←</button><button id="next" aria-label="Следующая страница">→</button></div></div>
+          <div class="table-note" id="table-note"></div>
         </section>
         <aside class="agent-panel">
           <div class="agent-heading"><span class="agent-icon">✦</span><div><h2>Закупочный агент</h2><span id="agent-mode">Демонстрационный режим</span></div><span class="small-dot"></span></div>

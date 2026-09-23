@@ -1,5 +1,6 @@
 """Double-click launcher: reuse a running StockPilot instance, or start it hidden."""
 import json
+import socket
 import subprocess
 import sys
 import time
@@ -8,30 +9,53 @@ from pathlib import Path
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parent
-URL = 'http://127.0.0.1:8765'
+BASE_PORT = 8765
 
 
-def running():
+def expected_products():
     try:
-        with urlopen(URL+'/api/health', timeout=1) as response:
-            return json.load(response).get('service') == 'StockPilot'
+        data = json.loads((ROOT/'data/dataset.json').read_text(encoding='utf-8'))
+        return len(data['items'])
+    except (OSError, ValueError, KeyError, TypeError):
+        return 6
+
+
+def running(port):
+    try:
+        with urlopen(f'http://127.0.0.1:{port}/api/health', timeout=1) as response:
+            health = json.load(response)
+            return health.get('service') == 'StockPilot' and health.get('products') == expected_products()
     except Exception:
         return False
 
 
-if not running():
+def port_available(port):
+    with socket.socket() as sock:
+        try:
+            sock.bind(('127.0.0.1', port))
+            return True
+        except OSError:
+            return False
+
+
+ports = range(BASE_PORT, BASE_PORT+20)
+port = next((candidate for candidate in ports if running(candidate)), None)
+if port is None:
+    port = next((candidate for candidate in ports if port_available(candidate)), None)
+    if port is None:
+        raise SystemExit('Не нашёл свободный порт для StockPilot.')
     (ROOT/'outputs').mkdir(exist_ok=True)
     with (ROOT/'outputs/server.log').open('a', encoding='utf-8') as log:
-        process = subprocess.Popen([sys.executable, '-X', 'utf8', str(ROOT/'app.py')], cwd=ROOT,
+        process = subprocess.Popen([sys.executable, '-X', 'utf8', str(ROOT/'app.py'), '--port', str(port)], cwd=ROOT,
                                    stdout=log, stderr=log,
                                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     for _ in range(40):
-        if running():
+        if running(port):
             break
         if process.poll() is not None:
-            raise SystemExit('StockPilot did not start. See outputs/server.log; port 8765 may be busy.')
+            raise SystemExit('StockPilot did not start. See outputs/server.log.')
         time.sleep(.3)
-if running():
-    webbrowser.open(URL)
+if running(port):
+    webbrowser.open(f'http://127.0.0.1:{port}')
 else:
-    raise SystemExit('Server is still starting. Open '+URL+' or inspect outputs/server.log.')
+    raise SystemExit(f'Server is still starting. Open http://127.0.0.1:{port} or inspect outputs/server.log.')
