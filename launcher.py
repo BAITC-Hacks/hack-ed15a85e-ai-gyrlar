@@ -1,5 +1,6 @@
 """Double-click launcher: reuse a running StockPilot instance, or start it hidden."""
 import json
+import hashlib
 import socket
 import subprocess
 import sys
@@ -31,6 +32,8 @@ def running(port):
     try:
         with urlopen(f'http://127.0.0.1:{port}/api/health', timeout=1) as response:
             health = json.load(response)
+            if health.get('workspace'):
+                return health.get('service') == 'StockPilot' and health['workspace'] == hashlib.sha256(str(ROOT.resolve()).encode()).hexdigest()
             return health.get('service') == 'StockPilot' and health.get('products') == expected_products()
     except Exception:
         return False

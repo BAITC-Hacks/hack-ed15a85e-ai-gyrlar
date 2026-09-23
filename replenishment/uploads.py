@@ -8,7 +8,8 @@ import math
 import re
 import zipfile
 from collections import Counter, defaultdict
-from datetime import date, datetime
+from copy import deepcopy
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from .engine import clean_transactions
@@ -29,8 +30,19 @@ FIELDS = {
     'moq': ('Минимальная партия', ['moq', 'минимальная партия', 'минимальный заказ']),
     'transit': ('Количество в пути', ['в пути', 'количество в пути', 'transit']),
     'eta': ('Дата поступления', ['дата поступления', 'eta']),
-    'order_id': ('Номер накладной', ['номер накладной', 'документ', 'номер документа', 'order_id']),
+    'order_id': ('Номер накладной', ['номер накладной', 'документ', 'номер документа', 'order_id', 'номер заказа', 'номер заказа поставщику', 'заказ поставщику']),
 }
+SOURCE_FIELDS = {
+    'sales': tuple(FIELDS),
+    'stock': ('code', 'stock', 'stock_date', 'supplier', 'name', 'unit', 'pack', 'moq'),
+    'transit': ('code', 'transit', 'eta', 'supplier', 'order_id', 'name', 'unit'),
+}
+SNAPSHOT_WARNINGS = {
+    'stock': 'Полный снимок остатков: товары, отсутствующие в файле, получают неизвестный остаток, а не ноль. Старые остатки заменяются.',
+    'transit': 'Полный снимок товаров в пути: прежние поставки заменяются. Для товаров, отсутствующих в файле, поставок в пути нет.',
+}
+STOCK_MISSING_WARNING = 'Товар отсутствует в последнем снимке остатков: остаток неизвестен. Добавьте его в файл, включая нулевые остатки.'
+STOCK_DATE_WARNING = 'Дата остатка не указана: принята выбранная дата расчёта. Подтвердите актуальность.'
 MONTHS = {'янв': 1, 'фев': 2, 'мар': 3, 'апр': 4, 'май': 5, 'июн': 6,
           'июл': 7, 'авг': 8, 'сен': 9, 'окт': 10, 'ноя': 11, 'дек': 12}
 
@@ -165,11 +177,38 @@ def inspect_file(content, filename):
     return dict(file=filename, bytes=len(content), sha256=hashlib.sha256(content).hexdigest(), tables=tables)
 
 
-def preview(upload):
-    return dict(file=upload['file'], fields=[dict(key=k, label=v[0]) for k, v in FIELDS.items()],
-                sheets=[{**{k: t[k] for k in ('name', 'columns', 'mapping', 'monthly', 'mode')},
-                         'rows': len(t['data']), 'sample': [[label(v) for v in r] for _, r in t['data'][:4]]}
-                        for t in upload['tables']], as_of=date.today().isoformat())
+def preview(upload, kind='sales'):
+    """Preview a source without mutating it; sales retains the original contract."""
+    if kind not in SOURCE_FIELDS:
+        raise ValueError('Выберите источник: продажи, остатки или товары в пути.')
+    fields = SOURCE_FIELDS[kind]
+    sheets = []
+    for table in upload['tables']:
+        mapping = {key: table['mapping'].get(key) for key in fields}
+        if kind == 'stock' and mapping.get('stock_date') is None:
+            mapping['stock_date'] = table['mapping'].get('date')
+        if kind == 'transit':
+            if mapping.get('transit') is None:
+                mapping['transit'] = table['mapping'].get('qty')
+            if mapping.get('eta') is None:
+                mapping['eta'] = table['mapping'].get('date')
+        sheets.append(dict(name=table['name'], columns=table['columns'], mapping=mapping,
+                           monthly=table['monthly'] if kind == 'sales' else {},
+                           mode=table['mode'] if kind == 'sales' else kind,
+                           rows=len(table['data']), sample=[[label(v) for v in row] for _, row in table['data'][:4]]))
+    required = {'sales': ['code', 'date', 'qty'], 'stock': ['code', 'stock'], 'transit': ['code', 'transit', 'eta']}[kind]
+    return dict(file=upload['file'], kind=kind,
+                fields=[dict(key=key, label='Номер заказа поставщику' if kind == 'transit' and key == 'order_id' else FIELDS[key][0]) for key in fields],
+                required=required, sheets=sheets, as_of=date.today().isoformat(),
+                warnings=[SNAPSHOT_WARNINGS[kind]] if kind != 'sales' else [])
+
+
+def _source_metadata(upload, table, kind, as_of, row_count, diagnostics=None, warnings=None):
+    return dict(kind=kind, type=kind, file=upload['file'], sheet=table['name'],
+                imported_at=datetime.now(timezone.utc).isoformat(timespec='seconds'),
+                row_count=row_count, hash=upload['sha256'], sha256=upload['sha256'],
+                bytes=upload['bytes'], as_of=as_of.isoformat(),
+                diagnostics=dict(diagnostics or {}), warnings=list(warnings or []))
 
 
 def build_dataset(upload, options):
@@ -221,7 +260,7 @@ def build_dataset(upload, options):
                 raise ValueError('пустой код товара; уберите итоговые строки')
             if code.lower() in ('итого', 'всего', 'total', 'общий итог'):
                 raise ValueError('удалите строку итогов из таблицы')
-            supplier = label(cell('supplier')) or 'Мой поставщик'
+            supplier = label(cell('supplier')) or label(options.get('supplier')) or 'Мой поставщик'
             # Hash the pair so delimiters within a supplier/code cannot merge goods.
             key = 'upload:'+hashlib.sha256((supplier+'\0'+code).encode()).hexdigest()[:24]
             if key not in items:
@@ -234,6 +273,8 @@ def build_dataset(upload, options):
                 raise ValueError('лимит — 10 000 товаров')
             if label(cell('unit')) and obj['unit'] and label(cell('unit')) != obj['unit']:
                 raise ValueError(f'для {code} указаны разные единицы измерения')
+            if label(cell('unit')):
+                obj['unit'] = label(cell('unit'))
             for field in ('stock', 'pack', 'moq', 'transit'):
                 value = numeric(cell(field), optional=True)
                 if value is not None:
@@ -302,7 +343,7 @@ def build_dataset(upload, options):
             year, mon = (year+1, 1) if mon == 12 else (year, mon+1)
         if obj['stock'] is not None and not obj['stock_date']:
             obj['stock_date'] = as_of.isoformat()
-            obj['warnings'].append('Дата остатка не указана: принята выбранная дата расчёта. Подтвердите актуальность.')
+            obj['warnings'].append(STOCK_DATE_WARNING)
         if obj['stock_date'] and obj['stock_date'] > as_of.isoformat():
             raise ValueError(f'{obj["code"]}: дата остатка позже даты расчёта.')
         if len(complete) < 6:
@@ -323,8 +364,191 @@ def build_dataset(upload, options):
     skipped = diagnostics['skipped_total_rows']+diagnostics['skipped_header_rows']
     if skipped:
         limitations.insert(0, f'Пропущено служебных строк: {skipped} (повторная шапка «Количество» или явно подписанный итог без кода).')
+    metadata = _source_metadata(upload, table, 'sales', as_of, diagnostics['imported_rows'], diagnostics)
     return dict(version=1, as_of=as_of.isoformat(), items=list(items.values()),
                 seasonality={i['supplier']: [1.0]*12 for i in items.values()},
-                sources=[dict(file=upload['file'], sha256=upload['sha256'], bytes=upload['bytes'], supplier='Пользовательский файл')],
+                sources=[dict(metadata, supplier='Пользовательский файл')], source_imports={'sales': metadata},
                 diagnostics=dict(diagnostics), limitations=limitations,
                 upload=dict(file=upload['file'], sheet=table['name'], format=mode, period=[complete[0], complete[-1]]))
+
+
+def merge_source(dataset, upload, options, kind):
+    """Apply an entire stock/transit snapshot after atomic validation.
+
+    The caller owns persistence. The input dataset, upload and options are never
+    mutated. Stock rows missing from this full snapshot become unknown; transit
+    rows missing from this full snapshot become empty. Reimporting never sums
+    snapshots, and matching preserves IDs from both manual and partner imports.
+    """
+    if kind not in ('stock', 'transit'):
+        raise ValueError('Объединение поддерживает остатки и товары в пути. Историю продаж загрузите первой.')
+    if not isinstance(dataset, dict) or not dataset.get('items'):
+        raise ValueError('Сначала загрузите историю продаж, затем остатки и товары в пути.')
+    index = options.get('sheet')
+    if type(index) is not int or not 0 <= index < len(upload['tables']):
+        raise ValueError('Выберите лист с остатками или товарами в пути.')
+    table = upload['tables'][index]
+    mapping = options.get('mapping')
+    if not isinstance(mapping, dict) or set(mapping)-set(FIELDS):
+        raise ValueError('Проверьте соответствие столбцов.')
+    mapping = dict(mapping)
+    # Public callers may use the familiar generic quantity field for transit.
+    if kind == 'transit' and mapping.get('transit') is None:
+        mapping['transit'] = mapping.get('qty')
+    mapping = {key: mapping.get(key) for key in SOURCE_FIELDS[kind]}
+    for value in mapping.values():
+        if value is not None and (type(value) is not int or not 0 <= value < len(table['columns'])):
+            raise ValueError('Выбран неизвестный столбец.')
+    used = [value for value in mapping.values() if value is not None]
+    if len(used) != len(set(used)):
+        raise ValueError('Один столбец нельзя назначить нескольким полям.')
+    for key in ('code', 'stock') if kind == 'stock' else ('code', 'transit', 'eta'):
+        if mapping.get(key) is None:
+            raise ValueError('Укажите столбец «'+FIELDS[key][0]+'».')
+    as_of = parse_date(options.get('as_of'))
+    by_code, by_pair = defaultdict(list), defaultdict(list)
+    for item in dataset['items']:
+        by_code[label(item['code'])].append(item)
+        by_pair[(label(item['supplier']), label(item['code']))].append(item)
+    stock_rows, transit_rows, shipments = {}, defaultdict(list), set()
+    diagnostics = Counter()
+    for line, row in table['data']:
+        def cell(key):
+            col = mapping.get(key)
+            return row[col] if col is not None else None
+        try:
+            code = label(cell('code'))
+            if not code:
+                if label(cell('name')).lower() in ('итого', 'всего', 'total', 'общий итог'):
+                    diagnostics['skipped_total_rows'] += 1
+                    continue
+                raise ValueError('пустой код товара; уберите итоговые строки')
+            supplier = label(cell('supplier')) or label(options.get('supplier'))
+            candidates = by_pair[(supplier, code)] if supplier else by_code[code]
+            if not candidates:
+                raise ValueError(f'код «{code}»'+(f' у поставщика «{supplier}»' if supplier else '')+
+                                 ' не найден в истории продаж. Сначала загрузите продажи этого товара или исправьте код/поставщика')
+            if len(candidates) != 1:
+                raise ValueError(f'код «{code}» встречается у нескольких поставщиков. Укажите столбец «Поставщик» или поставщика для всего файла')
+            item = candidates[0]
+            key = item['id']
+            unit = label(cell('unit'))
+            if unit and item.get('unit') and unit != item['unit']:
+                raise ValueError(f'единица «{unit}» не совпадает с «{item["unit"]}» в продажах {code}; приведите количества к одной единице')
+            if kind == 'stock':
+                value = numeric(cell('stock'))
+                if value < 0:
+                    raise ValueError('остаток не может быть отрицательным')
+                snapshot_date = parse_date(cell('stock_date')) if label(cell('stock_date')) else as_of
+                if snapshot_date > as_of:
+                    raise ValueError('дата остатка позже даты расчёта')
+                record = dict(stock=value, stock_date=snapshot_date.isoformat(),
+                              assumed_date=not bool(label(cell('stock_date'))))
+                for field in ('pack', 'moq'):
+                    field_value = numeric(cell(field), optional=True)
+                    if field_value is not None:
+                        if field_value < 0 or field == 'pack' and field_value == 0:
+                            raise ValueError(f'«{FIELDS[field][0]}»: нужно '+('положительное число' if field == 'pack' else 'число не меньше нуля'))
+                        record[field] = field_value
+                for field in ('name', 'unit'):
+                    if label(cell(field)):
+                        record[field] = label(cell(field))
+                if key in stock_rows:
+                    if stock_rows[key] != record:
+                        raise ValueError(f'у {code} разные остатки или реквизиты. Нужна одна итоговая строка по товару')
+                    diagnostics['duplicate_equal_stock_rows'] += 1
+                else:
+                    stock_rows[key] = record
+                    diagnostics['assumed_stock_dates'] += record['assumed_date']
+            else:
+                qty = numeric(cell('transit'))
+                if qty < 0:
+                    raise ValueError('количество в пути не может быть отрицательным')
+                eta = parse_date(cell('eta')).isoformat()
+                order_id = label(cell('order_id'))
+                identity = (key, order_id, eta)
+                if identity in shipments:
+                    raise ValueError(f'повтор поставки {code} на {eta}. Оставьте одну строку на товар/дату/номер заказа; для разных заказов укажите разные номера')
+                shipments.add(identity)
+                if qty:
+                    transit_rows[key].append(dict(qty=qty, eta=eta, order_id=order_id,
+                                                  source=upload['file'], source_kind='transit',
+                                                  source_hash=upload['sha256'], source_row=line))
+                diagnostics['overdue_shipments'] += bool(qty and eta < as_of.isoformat())
+                diagnostics['zero_shipments'] += qty == 0
+            diagnostics['imported_rows'] += 1
+        except ValueError as exc:
+            raise ValueError(f'Строка {line}: {exc}.') from None
+    if not diagnostics['imported_rows']:
+        raise ValueError('В выбранном листе нет строк товаров. Для отсутствующих поставок укажите количество 0 и дату снимка.')
+    result = deepcopy(dataset)
+    warnings = [SNAPSHOT_WARNINGS[kind]]
+    if kind == 'stock':
+        diagnostics['matched_products'] = len(stock_rows)
+        diagnostics['missing_stock_products'] = len(dataset['items'])-len(stock_rows)
+        if diagnostics['assumed_stock_dates']:
+            warnings.append(STOCK_DATE_WARNING)
+        if diagnostics['missing_stock_products']:
+            warnings.append(f'Нет строк остатков для {diagnostics["missing_stock_products"]} товаров: их заказы не рассчитываются до загрузки остатков.')
+    else:
+        diagnostics['matched_products'] = len(transit_rows)
+        diagnostics['shipment_count'] = sum(map(len, transit_rows.values()))
+        if diagnostics['overdue_shipments']:
+            warnings.append(f'Просроченных поставок: {diagnostics["overdue_shipments"]}. Они сохраняются для сверки, но не уменьшают заказ.')
+    source_tag = '[Остатки]' if kind == 'stock' else '[В пути]'
+    for item in result['items']:
+        item['sources'] = [source for source in item.get('sources', []) if not isinstance(source, str) or not source.startswith(source_tag+' ')]
+        key = item['id']
+        if kind == 'stock':
+            item['warnings'] = [warning for warning in item.get('warnings', []) if warning not in (STOCK_MISSING_WARNING, STOCK_DATE_WARNING)]
+            record = stock_rows.get(key)
+            item['stock'], item['stock_date'] = None, None
+            if record is None:
+                item['warnings'].append(STOCK_MISSING_WARNING)
+            else:
+                item.update({field: value for field, value in record.items() if field != 'assumed_date'})
+                if record['assumed_date']:
+                    item['warnings'].append(STOCK_DATE_WARNING)
+                item['sources'].append(f'{source_tag} {upload["file"]} · {table["name"]} · код {item["code"]}')
+        else:
+            item['transit'] = transit_rows.get(key, [])
+            if item['transit']:
+                item['sources'].append(f'{source_tag} {upload["file"]} · {table["name"]} · код {item["code"]}')
+    metadata = _source_metadata(upload, table, kind, as_of, diagnostics['imported_rows'], diagnostics, warnings)
+    result.setdefault('source_imports', {})[kind] = metadata
+    result['sources'] = [source for source in result.get('sources', []) if source.get('kind', source.get('type')) != kind]
+    result['sources'].append(dict(metadata, supplier='Пользовательский файл'))
+    result['as_of'] = as_of.isoformat()
+    result['limitations'] = [limitation for limitation in result.get('limitations', []) if limitation not in SNAPSHOT_WARNINGS.values()]
+    result['limitations'].extend(SNAPSHOT_WARNINGS[key] for key in ('stock', 'transit') if key in result['source_imports'])
+    return result
+
+
+def template_bytes(kind='sales'):
+    """Downloadable source templates share supplier/SKU keys and current dates."""
+    if kind not in SOURCE_FIELDS:
+        raise ValueError('Выберите шаблон продаж, остатков или товаров в пути.')
+    today = date.today()
+    supplier = 'Пример поставщика'
+    rows = []
+    if kind == 'sales':
+        rows.append(['Код товара', 'Поставщик', 'Название товара', 'Дата продажи', 'Количество продано', 'Единица', 'Номер накладной'])
+        index = today.year*12+today.month-1
+        for offset in range(12, 0, -1):
+            year, mon = divmod(index-offset, 12)
+            for code, name, qty in [('A-001', 'Автоматический выключатель', 24), ('A-002', 'Светильник', 12)]:
+                rows.append([code, supplier, name, f'{year:04}-{mon+1:02}-10', qty, 'шт', f'SALE-{year}-{mon+1:02}-{code}'])
+    elif kind == 'stock':
+        rows = [['Код товара', 'Поставщик', 'Остаток', 'Дата остатка', 'Кратность', 'Минимальная партия', 'Единица'],
+                ['A-001', supplier, 10, today.isoformat(), 6, 6, 'шт'],
+                ['A-002', supplier, 3, today.isoformat(), 1, 0, 'шт']]
+    else:
+        from datetime import timedelta
+        rows = [['Код товара', 'Поставщик', 'Количество в пути', 'Дата поступления', 'Номер заказа', 'Единица'],
+                ['A-001', supplier, 6, (today+timedelta(days=7)).isoformat(), 'PO-001', 'шт'],
+                ['A-001', supplier, 12, (today+timedelta(days=21)).isoformat(), 'PO-002', 'шт'],
+                ['A-002', supplier, 3, (today+timedelta(days=10)).isoformat(), 'PO-003', 'шт']]
+    output = io.StringIO(newline='')
+    writer = csv.writer(output, delimiter=';', lineterminator='\r\n')
+    writer.writerows(rows)
+    return output.getvalue().encode('utf-8-sig')
