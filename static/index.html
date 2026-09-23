@@ -5,24 +5,55 @@
 <aside class="sidebar">
   <a class="brand" href="/"><span class="brand-icon">S<span>↗</span></span><span>StockPilot<small>ЭЛЕКТРОКОМПЛЕКТ</small></span></a>
   <div class="workspace-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
-  <nav><button class="nav active" data-view="orders"><span>▤</span> Заказы поставщикам</button><button class="nav" data-view="quality"><span>◈</span> Источники данных</button><button class="nav" data-view="method"><span>⌘</span> Как устроен расчёт</button></nav>
+  <nav><button class="nav active" data-view="home" aria-label="Главная"><span>⌂</span> Главная</button><button class="nav" data-view="orders" aria-label="Анализ продаж"><span>▤</span> Анализ продаж</button><button class="nav" data-view="quality" aria-label="Источники данных"><span>◈</span> Источники данных</button><button class="nav" data-view="method" aria-label="Как устроен расчёт"><span>⌘</span> Как устроен расчёт</button></nav>
   <div class="sidebar-note"><span class="small-dot"></span> Локальное приложение<p>Данные хранятся<br>на этом компьютере</p></div>
   <div class="profile"><span class="avatar">ЭК</span><div>Менеджер закупа<small>Склад Алматы</small></div></div>
 </aside>
 <div class="application">
-  <header class="topbar"><div>Планирование закупок <span>/</span> <strong id="breadcrumb">Рекомендации</strong></div><div class="top-right"><span id="data-mode" class="muted">Данные партнёра</span><span class="date-label">На 22 сентября 2026</span></div></header>
+  <header class="topbar"><div>Планирование закупок <span>/</span> <strong id="breadcrumb">Главная</strong></div><div class="top-right"><span id="data-mode" class="muted">Загружаем данные…</span><span class="date-label" id="calculation-date"></span></div></header>
   <main>
-    <div class="page-heading"><div><div class="eyebrow">ПОПОЛНЕНИЕ СКЛАДА</div><h1 id="page-title">Заказы под контролем</h1><p id="page-subtitle">Регулярный спрос, реальные остатки, объяснимые рекомендации.</p></div><div class="heading-actions"><button id="settings-open" class="button secondary">⚙ Параметры</button><button id="export" class="button primary">↓ Экспорт CSV</button></div></div>
-    <section id="orders-view" class="view">
+    <div class="page-heading hidden"><div><div class="eyebrow">ПОПОЛНЕНИЕ СКЛАДА</div><h1 id="page-title">Анализ продаж и закупки</h1><p id="page-subtitle">Регулярный спрос, реальные остатки, объяснимые рекомендации.</p></div><div class="heading-actions"><button id="new-upload" class="button secondary">↑ Загрузить файл</button><button id="settings-open" class="button secondary">⚙ Параметры</button><button id="export" class="button primary">↓ Экспорт CSV</button></div></div>
+    <section id="home-view" class="view">
+      <div class="home-hero">
+        <div class="hero-copy"><div class="hero-badge"><span class="small-dot"></span> ВАШ ПОМОЩНИК В ЗАКУПКАХ</div>
+          <h1>Поймите продажи.<br><em>Закажите нужное.</em></h1>
+          <p class="hero-description">StockPilot анализирует историю продаж, убирает разовые всплески и рассчитывает, сколько товара нужно заказать на склад.</p>
+          <div class="hero-points"><span>✓ Находит регулярный спрос</span><span>✓ Учитывает остатки и поставки</span><span>✓ Объясняет рекомендации</span></div>
+          <button class="text-button" data-open-view="orders">Посмотреть текущий анализ <span>↗</span></button>
+        </div>
+        <div class="upload-card" id="dropzone">
+          <div class="upload-card-top"><span class="eyebrow">НАЧНИТЕ СО СВОИХ ДАННЫХ</span><span class="file-tag">EXCEL / CSV</span></div>
+          <div class="upload-symbol" aria-hidden="true"><svg width="38" height="42" viewBox="0 0 38 42" fill="none"><path d="M8 2h15l9 9v27a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="1.8"/><path d="M23 2v10h9M19 31V19m-5 5 5-5 5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <h2>Загрузите файл с продажами</h2><p>Перетащите его сюда или выберите на компьютере.</p>
+          <button id="choose-file" class="button primary upload-button" disabled>↑ Выбрать файл</button>
+          <input id="upload-file" type="file" accept=".xlsx,.csv" class="sr-only" tabindex="-1" aria-label="Файл с продажами">
+          <span class="upload-formats">.xlsx или .csv · до 20 МБ</span>
+          <div id="upload-status" class="upload-status" role="status" aria-live="polite"></div>
+          <div class="template-row"><span>Нужен пример таблицы?</span><a href="/api/import/template" download="StockPilot_пример.csv">Скачать образец ↓</a></div>
+          <p class="upload-local">Файл обрабатывается на этом компьютере.</p>
+        </div>
+      </div>
+      <div class="home-section-heading"><h2>От таблицы — к понятному решению</h2><span>Три шага, без ручных формул</span></div>
+      <div class="onboarding-steps">
+        <article><span class="home-step">01</span><div><h3>Загрузите продажи</h3><p>Даты, коды товаров и количество. Или готовая история по месяцам.</p></div></article>
+        <article><span class="home-step">02</span><div><h3>Проверьте данные</h3><p>Выберите лист и столбцы. Добавьте остатки, чтобы рассчитать закупку.</p></div></article>
+        <article><span class="home-step">03</span><div><h3>Получите анализ</h3><p>Спрос, всплески и рекомендации. Задавайте вопросы ИИ и выгружайте заказ.</p></div></article>
+      </div>
+      <section class="current-dataset"><div class="dataset-icon" aria-hidden="true">▤</div><div class="dataset-copy"><div class="eyebrow">МОЖНО ПРОДОЛЖИТЬ</div><h2 id="current-dataset-title">Загружаем текущий расчёт…</h2><p id="current-dataset-info">Проверяем сохранённые данные.</p></div><button class="button secondary" data-open-view="orders" id="continue-analysis" disabled>Открыть анализ →</button></section>
+      <div class="dataset-switches"><button id="restore-original" class="text-button hidden">Открыть данные кейса</button><button id="restore-upload" class="text-button hidden">Открыть последнюю загрузку</button></div>
+      <div class="home-note"><span>✦</span><p><strong>ИИ поможет разобраться в цифрах.</strong> Спросите, почему товар нужно заказать или что изменится при росте спроса. Решение о закупке остаётся за вами.</p></div>
+    </section>
+    <section id="orders-view" class="view hidden">
+      <div id="analysis-context" class="analysis-context"></div>
       <div class="stats" id="stats"><div class="skeleton">Загружаем расчёт…</div></div>
       <div class="work-grid">
         <section class="orders-panel">
-          <div class="panel-heading"><div><h2>Рекомендации к заказу <span id="result-count" class="counter"></span></h2><p>Выберите позицию, чтобы проверить расчёт</p></div><span class="status-dot">Рассчитано локально</span></div>
+          <div class="panel-heading"><div><h2>Товары и рекомендации <span id="result-count" class="counter"></span></h2><p>Нажмите на товар: график продаж, всплески и расчёт заказа</p></div><span class="status-dot">Рассчитано локально</span></div>
           <div class="supplier-tabs" id="supplier-tabs"><button class="supplier active" data-supplier="">Все поставщики</button><button class="supplier" data-supplier="IEK">IEK</button><button class="supplier" data-supplier="Systeme Electric">Systeme Electric</button></div>
           <div class="table-controls"><label class="search"><span>⌕</span><input id="search" aria-label="Поиск товара" placeholder="Артикул, код или название"></label><select id="status-filter" aria-label="Фильтр рекомендаций"><option value="order">К заказу</option><option value="all">Все позиции</option><option value="urgent">Риск дефицита</option><option value="missing">Нет остатка</option><option value="outlier">Есть выбросы</option><option value="approved">Утверждённые</option></select></div>
-          <div class="table-scroll"><table><thead><tr><th>Товар / поставщик</th><th class="num">Остаток</th><th class="num">В пути</th><th class="num">К заказу</th><th>Приоритет</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
+          <div class="table-scroll"><table><thead><tr><th>Товар / поставщик</th><th class="num">Спрос / мес.</th><th class="num">Остаток</th><th class="num">В пути</th><th class="num">К заказу</th><th>Приоритет</th><th></th></tr></thead><tbody id="rows"></tbody></table></div>
           <div class="pagination"><span id="page-info"></span><div><button id="prev" aria-label="Предыдущая страница">←</button><button id="next" aria-label="Следующая страница">→</button></div></div>
-          <div class="table-note"><span>ⓘ</span> IEK: исходные остатки на начало сентября. Предварительные рекомендации требуют сверки.</div>
+          <div class="table-note" id="table-note"></div>
         </section>
         <aside class="agent-panel">
           <div class="agent-heading"><span class="agent-icon">✦</span><div><h2>Закупочный агент</h2><span id="agent-mode">Демонстрационный режим</span></div><span class="small-dot"></span></div>
@@ -46,6 +77,21 @@
   </main>
 </div>
 <dialog id="item-dialog"><div id="item-content"></div></dialog>
+<dialog id="import-dialog" aria-labelledby="import-title">
+  <div class="dialog-heading"><div><div class="eyebrow">ПРОВЕРКА ПЕРЕД АНАЛИЗОМ</div><h2 id="import-title">Файл загружен. Проверим столбцы.</h2></div><button id="import-close" class="icon-button" aria-label="Закрыть загрузку">×</button></div>
+  <p id="import-file-info" class="dialog-help"></p>
+  <form id="import-form">
+    <div class="import-top-fields"><label>Лист с продажами<select id="import-sheet"></select></label><label>Как записаны продажи<select id="import-mode"><option value="transactions">По датам: одна продажа в строке</option><option value="monthly">По месяцам: месяц в столбце</option></select></label><label>Дата расчёта<input id="import-date" type="date" required min="2000-01-01" max="2100-12-31"></label></div>
+    <div class="import-preview table-scroll" id="import-preview"></div>
+    <div class="mapping-heading"><h3>Какие столбцы использовать?</h3><p>Мы подобрали по названиям. Проверьте соответствие.</p></div>
+    <div id="required-mapping" class="mapping-grid"></div>
+    <p id="monthly-info" class="import-hint hidden"></p>
+    <details class="optional-mapping"><summary>Остатки, поставщик и другие поля <span id="optional-count"></span></summary><p class="dialog-help">Остаток и количество в пути — один актуальный снимок на товар. Повторения не суммируются. Если даты остатка нет, будет принята дата расчёта.</p><div id="optional-mapping" class="mapping-grid"></div></details>
+    <p class="import-hint">Без остатка доступен анализ спроса; количество заказа появится после его ввода. В первой строке нужны заголовки. Повторная шапка «Количество» и строка «Итого» без кода распознаются автоматически. Новый анализ заменит последнюю загрузку; данные кейса сохранятся.</p>
+    <p id="import-error" class="import-error hidden" role="alert"></p>
+    <div class="dialog-actions"><button id="import-cancel" type="button" class="button secondary">Отмена</button><button id="import-submit" type="submit" class="button primary">Проанализировать продажи →</button></div>
+  </form>
+</dialog>
 <dialog id="settings-dialog"><div class="dialog-heading"><div><div class="eyebrow">НАСТРОЙКИ РАСЧЁТА</div><h2>Параметры пополнения</h2></div><button class="icon-button close-dialog" aria-label="Закрыть">×</button></div>
   <p class="dialog-help">Сроки и страховой запас — допущения сценария. Условия поставщиков нужно подтвердить перед заказом.</p>
   <form id="settings-form"><div class="form-grid">

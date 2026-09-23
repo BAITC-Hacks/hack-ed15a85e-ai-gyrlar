@@ -15,11 +15,12 @@ import threading
 from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, unquote
 
 from replenishment.agent import ask, summary
 from replenishment.demo import make_demo
 from replenishment.engine import calculate_all, number
+from replenishment.uploads import MAX_BYTES, inspect_file, preview, build_dataset
 
 ROOT = Path(__file__).resolve().parent
 DEFAULTS = dict(as_of='2026-09-22', lead_days=30, review_days=14, safety_days=7, growth_pct=0,
@@ -40,6 +41,7 @@ def validate_settings(value):
     result = copy.deepcopy(DEFAULTS)
     if not isinstance(value, dict):
         raise ValueError('Неверные параметры расчёта')
+    result['as_of'] = date.fromisoformat(value.get('as_of', DEFAULTS['as_of'])).isoformat()
     for key, (lo, hi) in {'lead_days': (1, 180), 'review_days': (1, 90), 'safety_days': (0, 90), 'growth_pct': (-90, 300)}.items():
         v = value.get(key, result[key])
         if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or not lo <= v <= hi:
@@ -92,16 +94,30 @@ def csv_bytes(rows):
 
 
 class State:
-    def __init__(self, demo=False):
+    def __init__(self, demo=False, mode=None, dataset=None):
         self.lock = threading.RLock()
-        self.demo = demo
-        self.path = ROOT/'data'/('demo-state.json' if demo else 'local-state.json')
-        self.base = make_demo() if demo else json.loads((ROOT/'data/dataset.json').read_text(encoding='utf-8'))
+        self.pending = None
+        if mode is None:
+            mode = 'demo' if demo else 'partner'
+            active = ROOT/'data/active-dataset.json'
+            if not demo and active.exists():
+                mode = json.loads(active.read_text(encoding='utf-8')).get('mode', mode)
+        if mode == 'partner' and not (ROOT/'data/dataset.json').exists():
+            mode = 'demo'
+        if mode not in ('demo', 'partner', 'upload'):
+            raise ValueError('Неизвестный набор данных')
+        self.mode, self.demo = mode, mode == 'demo'
+        self.path = ROOT/'data'/dict(demo='demo-state.json', partner='local-state.json', upload='uploaded-state.json')[mode]
+        saved = json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() and dataset is None else {}
+        self.base = (dataset or saved.get('dataset')) if mode == 'upload' else (
+            make_demo() if self.demo else json.loads((ROOT/'data/dataset.json').read_text(encoding='utf-8')))
+        if not self.base:
+            raise ValueError('Сначала загрузите файл с продажами')
         self.settings = copy.deepcopy(DEFAULTS)
+        self.settings['as_of'] = self.base.get('as_of', DEFAULTS['as_of'])
         self.overrides, self.reviews = {}, {}
-        if self.path.exists():
-            saved = json.loads(self.path.read_text(encoding='utf-8'))
-            self.settings = validate_settings(saved.get('settings', {}))
+        if saved:
+            self.settings = validate_settings({**self.settings, **saved.get('settings', {})})
             self.overrides = saved.get('overrides', {})
             self.reviews = saved.get('reviews', {})
         self.recalculate()
@@ -122,8 +138,18 @@ class State:
     def save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix('.tmp')
-        tmp.write_text(json.dumps(dict(settings=self.settings, overrides=self.overrides, reviews=self.reviews), ensure_ascii=False, indent=2), encoding='utf-8')
+        payload = dict(settings=self.settings, overrides=self.overrides, reviews=self.reviews)
+        if self.mode == 'upload':
+            payload['dataset'] = self.base
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
         tmp.replace(self.path)
+
+    def select(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        path = ROOT/'data/active-dataset.json'
+        tmp = path.with_suffix('.tmp')
+        tmp.write_text(json.dumps({'mode': self.mode}), encoding='utf-8')
+        tmp.replace(path)
 
     def review(self, request):
         row = next((r for r in self.rows if r['id'] == request.get('id')), None)
@@ -175,9 +201,20 @@ class Handler(BaseHTTPRequestHandler):
             with state.lock:
                 rows = [{k: v for k, v in r.items() if k not in ('history', 'sources', 'anomalies', 'season', 'transit')} for r in state.rows]
                 return self.send(dict(rows=rows, summary=summary(rows), settings=state.settings, csrf=self.server.csrf,
-                                      mode='demo' if state.demo else 'partner', agent='live' if os.environ.get('OPENAI_API_KEY') else 'demo',
+                                      mode=state.mode, agent='live' if os.environ.get('OPENAI_API_KEY') else 'demo',
+                                      upload=state.dataset.get('upload'), available_upload=(ROOT/'data/uploaded-state.json').exists(),
+                                      available_partner=(ROOT/'data/dataset.json').exists(),
                                       diagnostics=state.dataset.get('diagnostics'), limitations=state.dataset.get('limitations'),
                                       sources=state.dataset.get('sources'), categories=sorted(set(r['category'] for r in rows))))
+        if parsed.path == '/api/import/template':
+            from replenishment.engine import month_range
+            stream = io.StringIO(newline='')
+            writer = csv.writer(stream, delimiter=';')
+            writer.writerow(['Код товара', 'Название товара', 'Поставщик', 'Дата', 'Количество', 'Остаток', 'Кратность', 'Единица', 'Номер накладной'])
+            for i, month in enumerate(month_range(date.today(), 9)):
+                for code, name, qty, stock in [('A-001', 'Лампа LED', 25+i%3*5, 20), ('A-002', 'Розетка', 12+i%2*2, 60)]:
+                    writer.writerow([code, name, 'Пример поставщика', month+'-10', qty, stock, 5 if code == 'A-001' else 1, 'шт', f'{code}-{i}'])
+            return self.send(('\ufeff'+stream.getvalue()).encode('utf-8'), content_type='text/csv; charset=utf-8')
         if parsed.path == '/api/item':
             key = parse_qs(parsed.query).get('id', [''])[0]
             with state.lock:
@@ -194,8 +231,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.send({'error': 'Недопустимый запрос. Обновите страницу.'}, 403)
         try:
             length = int(self.headers.get('Content-Length', 0))
-            if not 0 < length <= 100_000:
+            limit = MAX_BYTES if self.path == '/api/import/preview' else 100_000
+            if not 0 < length <= limit:
                 raise ValueError('Недопустимый размер запроса')
+            if self.path == '/api/import/preview':
+                upload = inspect_file(self.rfile.read(length), unquote(self.headers.get('X-File-Name', '')))
+                token = secrets.token_urlsafe(24)
+                with self.server.state.lock:
+                    self.server.state.pending = (token, upload)
+                return self.send(dict(preview(upload), token=token))
             request = json.loads(self.rfile.read(length))
             if not isinstance(request, dict):
                 raise ValueError('Нужен JSON-объект')
@@ -205,6 +249,22 @@ class Handler(BaseHTTPRequestHandler):
                     dataset, settings, rows = state.dataset, copy.deepcopy(state.settings), state.rows
                 return self.send(ask(str(request.get('message', '')), dataset, settings, rows, request.get('history')))
             with state.lock:
+                if self.path == '/api/import/commit':
+                    if not state.pending or request.get('token') != state.pending[0]:
+                        raise ValueError('Предпросмотр устарел. Выберите файл заново.')
+                    dataset = build_dataset(state.pending[1], request)
+                    replacement = State(mode='upload', dataset=dataset)
+                    replacement.save()
+                    replacement.select()
+                    self.server.state = replacement
+                    return self.send({'ok': True, 'items': len(replacement.rows)})
+                if self.path == '/api/dataset':
+                    if request.get('mode') not in ('partner', 'demo', 'upload'):
+                        raise ValueError('Неизвестный набор данных')
+                    replacement = State(mode=request['mode'])
+                    replacement.select()
+                    self.server.state = replacement
+                    return self.send({'ok': True})
                 if self.path == '/api/calculate':
                     state.settings = validate_settings(request)
                     state.recalculate()
@@ -255,7 +315,7 @@ def main():
     parser.add_argument('--demo', action='store_true')
     args = parser.parse_args()
     load_env()
-    if not args.demo and not (ROOT/'data/dataset.json').exists():
+    if not args.demo and not (ROOT/'data/dataset.json').exists() and not (ROOT/'data/active-dataset.json').exists():
         print('Partner data not imported. Starting with synthetic demo data.')
         args.demo = True
     server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
