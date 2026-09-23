@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse, unquote
 
-from replenishment.agent import ask, summary
+from replenishment.agent import ask, summary, ToolCache
 from replenishment.demo import make_demo
 from replenishment.engine import calculate_all, number
 from replenishment.uploads import MAX_BYTES, inspect_file, preview, build_dataset, merge_source, template_bytes
@@ -189,6 +189,8 @@ class State:
         self.recalculate()
 
     def recalculate(self):
+        self.revision = secrets.token_hex(12)
+        self.agent_cache = ToolCache()
         self.dataset = copy.deepcopy(self.base)
         for item in self.dataset['items']:
             item.update(self.overrides.get(item['id'], {}))
@@ -464,6 +466,8 @@ class State:
         self.reviews[row['id']] = review
         row['review'] = review
         self.save()
+        self.revision = secrets.token_hex(12)
+        self.agent_cache = ToolCache()
         return review
 
 
@@ -504,7 +508,7 @@ class Handler(BaseHTTPRequestHandler):
                                       diagnostics=state.dataset.get('diagnostics'), limitations=state.dataset.get('limitations'),
                                       sources=state.dataset.get('sources'), categories=sorted(set(r['category'] for r in rows)),
                                       suppliers=sorted(set(r['supplier'] for r in rows)), source_imports=state.source_status(),
-                                      orders_summary=purchase_orders.summary(state.orders), automation=state.automation, notifications=state.notifications[-15:]))
+                                      orders_summary=purchase_orders.summary(state.orders), automation=state.automation, notifications=state.notifications[-15:], revision=state.revision))
         if parsed.path == '/api/import/template':
             try:
                 return self.send(template_bytes(query.get('kind', ['sales'])[0]), content_type='text/csv; charset=utf-8')
@@ -560,8 +564,17 @@ class Handler(BaseHTTPRequestHandler):
             state = self.server.state
             if self.path == '/api/agent':
                 with state.lock:
+                    revision = state.revision
+                    if request.get('revision') not in (None, revision):
+                        return self.send({'error': 'Расчёт обновился. Повторите вопрос по актуальным данным.'}, 409)
                     dataset, settings, rows = state.dataset, copy.deepcopy(state.settings), state.rows
-                return self.send(ask(str(request.get('message', '')), dataset, settings, rows, request.get('history')))
+                    tool_cache = state.agent_cache
+                response = ask(str(request.get('message', '')), dataset, settings, rows, request.get('history'), request.get('context'), tool_cache)
+                with state.lock:
+                    if self.server.state is not state or revision != state.revision:
+                        return self.send({'error': 'Данные изменились во время ответа. Задайте вопрос заново.'}, 409)
+                    response['revision'] = revision
+                    return self.send(response)
             if self.path == '/api/backtest':
                 from replenishment.analytics import backtest
                 months = request.get('months', 3)
